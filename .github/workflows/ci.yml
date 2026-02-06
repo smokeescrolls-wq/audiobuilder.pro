@@ -8,24 +8,38 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: "pnpm"
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Use pnpm 10
+        run: corepack prepare pnpm@10.28.0 --activate
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
-      - run: pnpm test
+      - run: pnpm test:run
 
   e2e:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
     steps:
       - uses: actions/checkout@v4
 
@@ -33,10 +47,24 @@ jobs:
         with:
           node-version: 20
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Use pnpm 10
+        run: corepack prepare pnpm@10.28.0 --activate
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm dlx playwright install --with-deps
-      - run: pnpm dlx playwright test
+
+      - name: Debug e2e ref + smoke
+        run: |
+          echo "SHA:"
+          git rev-parse HEAD
+          echo "LAST COMMIT:"
+          git log -1 --oneline
+          echo "SMOKE FILE:"
+          sed -n '1,120p' e2e/smoke.spec.ts
+          echo "GREP toHaveTitle (e2e):"
+          (grep -RIn "toHaveTitle" e2e || true)
+
+      - run: pnpm test:e2e
