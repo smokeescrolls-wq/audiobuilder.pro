@@ -1,10 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
-import { env } from "@/shared/config/env";
+import { envPublic } from "@/shared/config/env.public";
 
 const isPublicPath = (p: string) =>
   p === "/" ||
-  p.startsWith("/auth") ||
+  p.startsWith("/auth/login") ||
+  p.startsWith("/auth/register") ||
+  p.startsWith("/auth/callback") ||
   p.startsWith("/api") ||
   p.startsWith("/_next") ||
   p.startsWith("/favicon") ||
@@ -19,9 +21,13 @@ export async function middleware(req: NextRequest) {
   res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   res.headers.set("X-Frame-Options", "DENY");
 
+  const path = req.nextUrl.pathname;
+
+  if (isPublicPath(path)) return res;
+
   const supabase = createServerClient(
-    env.NEXT_PUBLIC_SUPABASE_URL,
-    env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    envPublic.NEXT_PUBLIC_SUPABASE_URL,
+    envPublic.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
       cookies: {
         getAll: () => req.cookies.getAll(),
@@ -33,10 +39,6 @@ export async function middleware(req: NextRequest) {
       },
     }
   );
-
-  const path = req.nextUrl.pathname;
-
-  if (isPublicPath(path)) return res;
 
   const { data } = await supabase.auth.getUser();
   const user = data.user;

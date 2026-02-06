@@ -1,5 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
-import { env } from "@/shared/config/env";
+import { envPublic } from "@/shared/config/env.public";
 
 export const supabaseBrowser = () =>
-  createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  createClient(
+    envPublic.NEXT_PUBLIC_SUPABASE_URL,
+    envPublic.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  );
