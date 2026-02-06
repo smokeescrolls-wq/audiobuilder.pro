@@ -3,21 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
+    "lint:next": "next lint",
     "lint:staged": "eslint --max-warnings=0",
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e": "playwright test",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "prepare": "husky"
-  },
-    "lint-staged": {
-      "*.{ts,tsx,js,jsx}": [
-        "pnpm lint:staged"
-      ]
-    },
+  }
+  ,
+      "lint-staged": {
+        "*.{ts,tsx,js,jsx}": ["pnpm lint:staged"]
+      }
+  ,
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
     "@prisma/client": "^7.3.0",
