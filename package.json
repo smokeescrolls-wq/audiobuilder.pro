@@ -12,11 +12,11 @@
     "test:e2e": "playwright test",
     "prepare": "husky"
   },
-"lint-staged": {
-  "*.{ts,tsx,js,jsx}": [
-    "pnpm lint:staged"
-  ]
-},
+    "lint-staged": {
+      "*.{ts,tsx,js,jsx}": [
+        "pnpm lint:staged"
+      ]
+    },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
     "@prisma/client": "^7.3.0",
