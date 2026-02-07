@@ -12,8 +12,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "postinstall": "prisma generate",
     "prepare": "husky"
-  },
+  }
+,
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
       "pnpm lint:staged"
