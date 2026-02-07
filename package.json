@@ -13,12 +13,12 @@
     "build": "next build",
     "start": "next start",
     "prepare": "husky"
-  }
-  ,
-      "lint-staged": {
-        "*.{ts,tsx,js,jsx}": ["pnpm lint:staged"]
-      }
-  ,
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "pnpm lint:staged"
+    ]
+  },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
     "@prisma/client": "^7.3.0",
@@ -26,6 +26,7 @@
     "@supabase/supabase-js": "^2.95.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "fluent-ffmpeg": "^2.1.3",
     "jose": "^6.1.3",
     "lucide-react": "^0.563.0",
     "next": "16.1.6",
@@ -47,6 +48,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/fluent-ffmpeg": "^2.1.28",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
