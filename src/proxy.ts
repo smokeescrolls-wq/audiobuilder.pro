@@ -4,26 +4,35 @@ import { envPublic } from "@/shared/config/env.public";
 
 const isPublicPath = (p: string) =>
   p === "/" ||
-  p.startsWith("/auth/login") ||
-  p.startsWith("/auth/register") ||
-  p.startsWith("/auth/callback") ||
+  p === "/auth/login" ||
+  p === "/auth/register" ||
+  p === "/auth/callback" ||
   p.startsWith("/api") ||
   p.startsWith("/_next") ||
   p.startsWith("/favicon") ||
   p.startsWith("/robots") ||
   p.startsWith("/sitemap");
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const res = NextResponse.next();
 
   res.headers.set("X-Content-Type-Options", "nosniff");
   res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.headers.set(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=()"
+  );
   res.headers.set("X-Frame-Options", "DENY");
 
   const path = req.nextUrl.pathname;
 
+  // ✅ libera rotas públicas
   if (isPublicPath(path)) return res;
+
+  // ✅ DEV ONLY: liberar dashboard para você montar o layout sem login
+  if (process.env.NODE_ENV === "development" && path.startsWith("/dashboard")) {
+    return res;
+  }
 
   const supabase = createServerClient(
     envPublic.NEXT_PUBLIC_SUPABASE_URL,
@@ -46,7 +55,11 @@ export async function middleware(req: NextRequest) {
   if (!user) {
     const url = req.nextUrl.clone();
     url.pathname = "/auth/login";
-    url.searchParams.set("next", path);
+
+    // mantém o caminho + query (ex: /dashboard?x=1)
+    const next = req.nextUrl.pathname + (req.nextUrl.search ?? "");
+    url.searchParams.set("next", next);
+
     return NextResponse.redirect(url);
   }
 
