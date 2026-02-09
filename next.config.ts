@@ -1,14 +1,23 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
   experimental: {
-    // Aumentar limite de body size para 500MB
     serverActions: {
       bodySizeLimit: "500mb",
     },
   },
-  // Configurar headers para CORS se necessário
+
+  outputFileTracingIncludes: {
+    "/api/process-video": [
+      "./node_modules/ffmpeg-static/**",
+      "./node_modules/ffprobe-static/**",
+
+      // pnpm (frequente no Vercel)
+      "./node_modules/.pnpm/**/node_modules/ffmpeg-static/**",
+      "./node_modules/.pnpm/**/node_modules/ffprobe-static/**",
+    ],
+  },
+
   async headers() {
     return [
       {
@@ -16,10 +25,7 @@ const nextConfig: NextConfig = {
         headers: [
           { key: "Access-Control-Allow-Credentials", value: "true" },
           { key: "Access-Control-Allow-Origin", value: "*" },
-          {
-            key: "Access-Control-Allow-Methods",
-            value: "GET,DELETE,PATCH,POST,PUT",
-          },
+          { key: "Access-Control-Allow-Methods", value: "GET,DELETE,PATCH,POST,PUT" },
           {
             key: "Access-Control-Allow-Headers",
             value:

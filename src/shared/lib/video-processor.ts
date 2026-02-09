@@ -6,8 +6,18 @@ import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
 
-if (ffmpegStatic) ffmpeg.setFfmpegPath(ffmpegStatic);
-if (ffprobeStatic?.path) ffmpeg.setFfprobePath(ffprobeStatic.path);
+const ffmpegPath =
+  typeof ffmpegStatic === "string"
+    ? ffmpegStatic
+    : (ffmpegStatic as unknown as { path?: string })?.path;
+
+const ffprobePath =
+  typeof ffprobeStatic === "string"
+    ? ffprobeStatic
+    : (ffprobeStatic as unknown as { path?: string })?.path;
+
+if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
+if (ffprobePath) ffmpeg.setFfprobePath(ffprobePath);
 
 
 interface ProcessingOptions {
