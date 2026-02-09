@@ -1,8 +1,14 @@
 import ffmpeg from "fluent-ffmpeg";
+import ffmpegStatic from "ffmpeg-static";
+import ffprobeStatic from "ffprobe-static";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
+
+if (ffmpegStatic) ffmpeg.setFfmpegPath(ffmpegStatic);
+if (ffprobeStatic?.path) ffmpeg.setFfprobePath(ffprobeStatic.path);
+
 
 interface ProcessingOptions {
   phaseInversion: number; // 0-100
