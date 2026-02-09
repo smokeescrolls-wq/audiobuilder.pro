@@ -1,14 +1,13 @@
+import ffmpeg from "fluent-ffmpeg";
+import ffmpegPath from "ffmpeg-static";
+import { path as ffprobePath } from "@ffprobe-installer/ffprobe";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
 
-import ffmpeg from "fluent-ffmpeg";
-import ffmpegPath from "ffmpeg-static";
-import ffprobeInstaller from "@ffprobe-installer/ffprobe";
-
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
-if (ffprobeInstaller?.path) ffmpeg.setFfprobePath(ffprobeInstaller.path);
+if (ffprobePath) ffmpeg.setFfprobePath(ffprobePath);
 
 interface ProcessingOptions {
   phaseInversion: number; // 0-100

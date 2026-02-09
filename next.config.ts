@@ -7,16 +7,13 @@ const nextConfig: NextConfig = {
     },
   },
 
-  outputFileTracingIncludes: {
-    "/api/process-video": [
-      "./node_modules/ffmpeg-static/**",
-      "./node_modules/ffprobe-static/**",
-
-      // pnpm (frequente no Vercel)
-      "./node_modules/.pnpm/**/node_modules/ffmpeg-static/**",
-      "./node_modules/.pnpm/**/node_modules/ffprobe-static/**",
-    ],
-  },
+  // ✅ evita Turbopack tentar “ler/parsear” binários/README dentro desses pacotes
+  serverExternalPackages: [
+    "fluent-ffmpeg",
+    "ffmpeg-static",
+    "@ffprobe-installer/ffprobe",
+    "@ffprobe-installer/linux-x64",
+  ],
 
   async headers() {
     return [
