@@ -12,19 +12,13 @@ export async function GET(
     const { id } = await params;
 
     if (!id) {
-      return NextResponse.json(
-        { error: "ID não fornecido" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "ID não fornecido" }, { status: 400 });
     }
 
     const cacheEntry = getCacheEntry(id);
 
     if (!cacheEntry) {
-      return NextResponse.json(
-        { error: "Arquivo não encontrado" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Arquivo não encontrado" }, { status: 404 });
     }
 
     if (cacheEntry.status !== "completed") {
@@ -34,17 +28,12 @@ export async function GET(
       );
     }
 
-    // Se tem URL S3, redirecionar
     if (cacheEntry.s3Url && !cacheEntry.localOnly) {
       return NextResponse.redirect(cacheEntry.s3Url);
     }
 
-    // Servir arquivo local
     if (!cacheEntry.outputPath) {
-      return NextResponse.json(
-        { error: "Arquivo não disponível" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Arquivo não disponível" }, { status: 404 });
     }
 
     if (!existsSync(cacheEntry.outputPath)) {
@@ -54,22 +43,19 @@ export async function GET(
       );
     }
 
-    // Obter informações do arquivo
     const fileStats = await stat(cacheEntry.outputPath);
     const fileSize = fileStats.size;
 
-    // Criar stream de leitura
     const fileStream = createReadStream(cacheEntry.outputPath);
-
-    // Converter Node.js Readable para Web ReadableStream
     const webStream = Readable.toWeb(fileStream) as ReadableStream<Uint8Array>;
 
-    // Retornar arquivo como stream
     return new NextResponse(webStream, {
       headers: {
         "Content-Type": "video/mp4",
         "Content-Length": fileSize.toString(),
-        "Content-Disposition": `attachment; filename="${encodeURIComponent(cacheEntry.processedFilename)}"`,
+        "Content-Disposition": `attachment; filename="${encodeURIComponent(
+          cacheEntry.processedFilename
+        )}"`,
         "Cache-Control": "public, max-age=3600",
       },
     });

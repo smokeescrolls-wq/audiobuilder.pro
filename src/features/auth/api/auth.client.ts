@@ -27,3 +27,8 @@ export async function signInWithGoogle(redirectTo: string) {
     options: { redirectTo },
   });
 }
+
+export async function signOut() {
+  const supabase = supabaseBrowser();
+  return supabase.auth.signOut();
+}

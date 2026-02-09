@@ -155,3 +155,102 @@
     font-family: var(--font-mono);
   }
 }
+
+/* ============================
+   SONNER (NEON TOAST) - AUDIOBUILDER
+============================ */
+
+.ab-toast {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px !important;
+
+  background: rgba(0, 0, 0, 0.92) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06) inset,
+    0 10px 30px rgba(0, 0, 0, 0.55),
+    0 0 22px rgba(250, 204, 21, 0.16),
+    0 0 52px rgba(250, 204, 21, 0.1) !important;
+
+  backdrop-filter: blur(10px);
+}
+
+.ab-toast::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 18px;
+  padding: 1px;
+
+  background: conic-gradient(
+    from 180deg,
+    rgba(250, 204, 21, 0),
+    rgba(250, 204, 21, 0.65),
+    rgba(255, 255, 255, 0.14),
+    rgba(250, 204, 21, 0.55),
+    rgba(250, 204, 21, 0)
+  );
+
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+
+  opacity: 0.55;
+  animation: abToastSpin 4s linear infinite;
+  pointer-events: none;
+}
+
+.ab-toast::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 20% 20%,
+    rgba(250, 204, 21, 0.18),
+    transparent 55%
+  );
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.ab-toast-title {
+  font-size: 12px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.2em !important;
+  color: rgba(255, 255, 255, 0.92) !important;
+  text-transform: uppercase;
+}
+
+.ab-toast-desc {
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+  color: rgba(255, 255, 255, 0.62) !important;
+}
+
+.ab-toast-action {
+  border-radius: 10px !important;
+  background: rgba(250, 204, 21, 0.16) !important;
+  border: 1px solid rgba(250, 204, 21, 0.22) !important;
+  color: rgba(250, 204, 21, 0.95) !important;
+}
+
+.ab-toast-action:hover {
+  background: rgba(250, 204, 21, 0.22) !important;
+}
+
+.ab-toast-cancel {
+  border-radius: 10px !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+
+@keyframes abToastSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
