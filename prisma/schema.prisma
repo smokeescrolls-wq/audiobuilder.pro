@@ -15,11 +15,22 @@ model profiles {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @db.Timestamptz(6)
 }
-
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model user_roles {
   user_id    String   @id @db.Uuid
   role       String   @default("user")
   created_at DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model processing_history {
+  id                  String   @id @default(uuid()) @db.Uuid
+  user_id             String   @db.Uuid
+  filename            String
+  processed_filename  String?
+  status              String   @default("queued")
+  download_url        String?
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+  completed_at        DateTime? @db.Timestamptz(6)
 }

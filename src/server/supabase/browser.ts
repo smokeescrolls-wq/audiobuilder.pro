@@ -4,6 +4,13 @@ import { envPublic } from "@/shared/config/env.public";
 export function supabaseBrowser() {
   return createBrowserClient(
     envPublic.NEXT_PUBLIC_SUPABASE_URL,
-    envPublic.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    envPublic.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    }
   );
 }

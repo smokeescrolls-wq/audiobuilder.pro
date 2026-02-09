@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Camera, Loader2, Save, User as UserIcon } from "lucide-react";
+import { Camera, Loader2, LogOut, Save, User as UserIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { signOut } from "@/features/auth/api/auth.client";
 
 import {
   Dialog,
@@ -34,6 +36,8 @@ export function ProfileDialog(props: {
   onUpdated: (v: { fullName: string; avatarUrl?: string | null }) => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const router = useRouter();
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -86,20 +90,32 @@ export function ProfileDialog(props: {
         props.initialAvatarUrl ?? null;
 
       if (values.avatar) {
-        const safeName = values.avatar.name.replace(/[^\w.-]+/g, "_");
-        const stableId = `${values.avatar.lastModified}-${values.avatar.size}`;
-        const path = `${user.id}/avatar-${stableId}-${safeName}`;
+        try {
+          const safeName = values.avatar.name.replace(/[^\w.-]+/g, "_");
+          const timestamp = Date.now();
+          const path = `${user.id}/avatar-${timestamp}-${safeName}`;
 
-        const up = await supabase.storage
-          .from("avatars")
-          .upload(path, values.avatar, {
-            upsert: true,
-            contentType: values.avatar.type,
-          });
+          const up = await supabase.storage
+            .from("avatars")
+            .upload(path, values.avatar, {
+              upsert: true,
+              contentType: values.avatar.type,
+            });
 
-        if (!up.error) {
-          const pub = supabase.storage.from("avatars").getPublicUrl(path);
-          avatar_url = pub.data.publicUrl ?? null;
+          if (up.error) {
+            if (up.error.message.toLowerCase().includes("bucket")) {
+              console.warn("Bucket avatars nao encontrado");
+              avatar_url = props.initialAvatarUrl ?? null;
+            } else {
+              throw new Error(`Erro ao fazer upload: ${up.error.message}`);
+            }
+          } else {
+            const pub = supabase.storage.from("avatars").getPublicUrl(path);
+            avatar_url = pub.data.publicUrl ?? null;
+          }
+        } catch (e) {
+          console.warn("Erro ao fazer upload do avatar:", e);
+          avatar_url = props.initialAvatarUrl ?? null;
         }
       }
 
@@ -231,6 +247,35 @@ export function ProfileDialog(props: {
                 <span className="flex items-center justify-center gap-2">
                   <Save className="h-4 w-4" />
                   ATUALIZAR CREDENCIAIS
+                </span>
+              )}
+            </Button>
+
+            <Button
+              className="h-12 w-full rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 cursor-pointer"
+              disabled={loggingOut || saving}
+              type="button"
+              onClick={async () => {
+                setLoggingOut(true);
+                try {
+                  await signOut();
+                  router.push("/auth");
+                } catch (e) {
+                  console.error("Erro ao fazer logout:", e);
+                } finally {
+                  setLoggingOut(false);
+                }
+              }}
+            >
+              {loggingOut ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  SAINDO...
+                </span>
+              ) : (
+                <span className="flex items-center justify-center gap-2">
+                  <LogOut className="h-4 w-4" />
+                  SAIR DA CONTA
                 </span>
               )}
             </Button>

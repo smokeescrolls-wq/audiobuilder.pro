@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
-import { Shield, Upload, Search, Loader2 } from "lucide-react";
+import {
+  Shield,
+  Upload,
+  Search,
+  Loader2,
+  Settings,
+  LogOut,
+} from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { signOut } from "@/features/auth/api/auth.client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,8 +27,9 @@ import { supabaseBrowser } from "@/server/supabase/browser";
 type SessionItem = {
   id: string;
   filename: string;
-  status: "idle" | "processing" | "done" | "error";
+  status: "queued" | "processing" | "done" | "error";
   createdAt: string;
+  downloadUrl?: string;
 };
 
 function cn(...v: Array<string | false | null | undefined>) {
@@ -38,6 +49,111 @@ function initialsFromName(name: string) {
     .join("");
 }
 
+function safeName(name: string) {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/_+/g, "_");
+}
+
+function isStorageBucketNotFound(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.toLowerCase().includes("bucket") &&
+    msg.toLowerCase().includes("not found")
+  );
+}
+
+async function getUserIdOrThrow() {
+  const supabase = supabaseBrowser();
+
+  const { data: sess, error: sessErr } = await supabase.auth.getSession();
+  if (sessErr) throw new Error(sessErr.message);
+  if (!sess.session)
+    throw new Error("Usuário não autenticado (sem sessão). Faça login.");
+
+  const { data, error } = await supabase.auth.getUser();
+  if (error) throw new Error(error.message);
+
+  const user = data.user;
+  if (!user) throw new Error("Usuário não autenticado (getUser sem user).");
+
+  return user.id;
+}
+
+async function uploadToStorage(params: { userId: string; file: File }) {
+  const supabase = supabaseBrowser();
+
+  const original = params.file.name || "input.bin";
+  const ext = original.includes(".") ? original.split(".").pop() : "bin";
+  const base = safeName(original.replace(/\.[^/.]+$/, ""));
+  const key = `${params.userId}/${base}-${Date.now()}.${ext}`;
+
+  const { data: sess } = await supabase.auth.getSession();
+  if (!sess.session)
+    throw new Error("Sessão não encontrada. Faça login e tente novamente.");
+
+  const up = await supabase.storage.from("uploads").upload(key, params.file, {
+    upsert: true,
+    contentType: params.file.type || "application/octet-stream",
+    cacheControl: "3600",
+  });
+
+  if (up.error) {
+    throw new Error(`Upload falhou: ${up.error.message}`);
+  }
+
+  return { bucket: "uploads", path: key };
+}
+
+/** ===== Persistência do histórico ===== */
+
+function historyKey(userId: string) {
+  return `audiobuilder_history_v1:${userId}`;
+}
+
+function readHistory(userId: string): SessionItem[] {
+  try {
+    const raw = localStorage.getItem(historyKey(userId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as SessionItem[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x) => x?.status === "done");
+  } catch {
+    return [];
+  }
+}
+
+function writeHistory(userId: string, items: SessionItem[]) {
+  try {
+    localStorage.setItem(
+      historyKey(userId),
+      JSON.stringify(items.slice(0, 200)),
+    );
+  } catch {}
+}
+
+/** ✅ download direto (sem abrir aba) */
+async function downloadDirect(url: string, filename: string) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error("Falha ao baixar o arquivo");
+
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename || "download.mp4";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  URL.revokeObjectURL(objectUrl);
+}
+
+/** ===== Dashboard ===== */
+
 export function DashboardShell() {
   const [phase, setPhase] = useState(100);
   const [ultra, setUltra] = useState(85);
@@ -45,141 +161,244 @@ export function DashboardShell() {
 
   const [engine, setEngine] = useState<"standby" | "active">("standby");
   const [queue, setQueue] = useState<SessionItem[]>([]);
+  const [history, setHistory] = useState<SessionItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const [search, setSearch] = useState("");
 
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-
   const [profileOpen, setProfileOpen] = useState(false);
   const [operatorName, setOperatorName] = useState("LEO");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  const [uiError, setUiError] = useState<string | null>(null);
+
+  const filesByIdRef = useRef<Record<string, File>>({});
+  const userIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const supabase = supabaseBrowser();
-    supabase.auth.getUser().then(({ data }) => {
+    let alive = true;
+
+    async function loadUser() {
+      const { data: sess } = await supabase.auth.getSession();
+      if (!alive) return;
+      if (!sess.session) return;
+
+      const { data } = await supabase.auth.getUser();
+      if (!alive) return;
+
       const user = data.user;
+      if (!user) return;
+
+      userIdRef.current = user.id;
+
       const name =
-        (user?.user_metadata?.full_name as string | undefined) ||
-        (user?.email ? user.email.split("@")[0] : "LEO");
+        (user.user_metadata?.full_name as string | undefined) ||
+        (user.email ? user.email.split("@")[0] : "LEO");
 
       const avatar =
-        (user?.user_metadata?.avatar_url as string | undefined) ?? null;
+        (user.user_metadata?.avatar_url as string | undefined) ?? null;
 
       setOperatorName(String(name).toUpperCase());
       setAvatarUrl(avatar);
+
+      setHistory(readHistory(user.id));
+
+      // Verificar se é admin
+      const { data: roleData } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      setIsAdmin(roleData?.role === "admin");
+    }
+
+    loadUser();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      loadUser();
     });
+
+    return () => {
+      alive = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
-  const filtered = useMemo(() => {
+  useEffect(() => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    writeHistory(uid, history);
+  }, [history]);
+
+  const filteredHistory = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return queue;
-    return queue.filter((x) => x.filename.toLowerCase().includes(q));
-  }, [queue, search]);
+    if (!q) return history;
+    return history.filter((x) => x.filename.toLowerCase().includes(q));
+  }, [history, search]);
 
-  async function addJob(fileName: string, file: File) {
-    const now = new Date();
-    const tempId = crypto.randomUUID();
-    const item: SessionItem = {
-      id: tempId,
-      filename: fileName,
-      status: "processing",
-      createdAt: now.toLocaleString("pt-BR"),
-    };
+  function onPickFiles(files: FileList | File[]) {
+    const list = Array.from(files);
+    if (list.length === 0) return;
 
-    setQueue((prev) => [item, ...prev]);
+    const createdAt = new Date().toLocaleString("pt-BR");
+
+    const items: SessionItem[] = list.map((file) => {
+      const id = crypto.randomUUID();
+      filesByIdRef.current[id] = file;
+      return { id, filename: file.name, status: "queued", createdAt };
+    });
+
+    setQueue((prev) => [...items, ...prev]);
+    setUiError(null);
+  }
+
+  async function processJob(jobId: string) {
+    const file = filesByIdRef.current[jobId];
+    const item = queue.find((x) => x.id === jobId);
+    if (!file || !item) return;
+
+    setQueue((prev) =>
+      prev.map((x) => (x.id === jobId ? { ...x, status: "processing" } : x)),
+    );
     setEngine("active");
-    setIsProcessing(true);
 
     try {
-      // Enviar arquivo para a API
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("phaseInversion", phase.toString());
-      formData.append("ultrasonicNoise", ultra.toString());
-      formData.append("sessionId", crypto.randomUUID());
+      const userId = await getUserIdOrThrow();
+      const { bucket, path } = await uploadToStorage({ userId, file });
 
-      const response = await fetch("/api/process-video", {
+      const apiRes = await fetch("/api/process-video", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bucket,
+          path,
+          sessionId: crypto.randomUUID(),
+          options: { phaseInversion: phase, ultrasonicNoise: ultra, optimizer },
+        }),
       });
 
-      if (!response.ok) {
-        throw new Error("Erro ao processar vídeo");
+      if (!apiRes.ok) {
+        const err = await apiRes.json().catch(() => null);
+        throw new Error(err?.error || "Erro ao processar vídeo");
       }
 
-      const data = await response.json();
-      const cacheId = data.cacheId;
+      const data = await apiRes.json();
+      const cacheId = String(data.cacheId);
 
-      // Atualizar item com o ID real
+      filesByIdRef.current[cacheId] = filesByIdRef.current[jobId];
+      delete filesByIdRef.current[jobId];
+
       setQueue((prev) =>
-        prev.map((x) => (x.id === tempId ? { ...x, id: cacheId } : x)),
+        prev.map((x) => (x.id === jobId ? { ...x, id: cacheId } : x)),
       );
 
-      // Fazer polling do status
-      const pollInterval = setInterval(async () => {
-        try {
-          const statusResponse = await fetch(`/api/status/${cacheId}`);
-          if (!statusResponse.ok) {
-            throw new Error("Erro ao verificar status");
-          }
+      await new Promise<void>((resolve) => {
+        const poll = setInterval(async () => {
+          try {
+            const statusRes = await fetch(`/api/status/${cacheId}`, {
+              cache: "no-store",
+            });
+            if (!statusRes.ok) throw new Error("Erro ao verificar status");
+            const statusData = await statusRes.json();
 
-          const statusData = await statusResponse.json();
+            if (statusData.status === "completed") {
+              const downloadUrl = statusData.downloadUrl as string | undefined;
+              const processedFilename =
+                (statusData.processedFilename as string | undefined) ??
+                item.filename;
 
-          if (statusData.status === "completed") {
-            setQueue((prev) =>
-              prev.map((x) =>
-                x.id === cacheId ? { ...x, status: "done" } : x,
-              ),
-            );
-            setIsProcessing(false);
-            setEngine("standby");
-            clearInterval(pollInterval);
-          } else if (statusData.status === "failed") {
+              setQueue((prev) => prev.filter((x) => x.id !== cacheId));
+
+              setHistory((prev) => [
+                {
+                  id: cacheId,
+                  filename: processedFilename,
+                  status: "done",
+                  createdAt: item.createdAt,
+                  downloadUrl,
+                },
+                ...prev,
+              ]);
+
+              clearInterval(poll);
+              resolve();
+              return;
+            }
+
+            if (statusData.status === "failed") {
+              setQueue((prev) =>
+                prev.map((x) =>
+                  x.id === cacheId ? { ...x, status: "error" } : x,
+                ),
+              );
+              clearInterval(poll);
+              resolve();
+              return;
+            }
+          } catch {
             setQueue((prev) =>
               prev.map((x) =>
                 x.id === cacheId ? { ...x, status: "error" } : x,
               ),
             );
-            setIsProcessing(false);
-            setEngine("standby");
-            clearInterval(pollInterval);
+            clearInterval(poll);
+            resolve();
           }
-        } catch (error) {
-          console.error("Erro ao verificar status:", error);
-          clearInterval(pollInterval);
-          setQueue((prev) =>
-            prev.map((x) => (x.id === cacheId ? { ...x, status: "error" } : x)),
-          );
-          setIsProcessing(false);
-          setEngine("standby");
-        }
-      }, 2000); // Verificar a cada 2 segundos
-    } catch (error) {
-      console.error("Erro ao processar vídeo:", error);
+        }, 2000);
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+
       setQueue((prev) =>
-        prev.map((x) => (x.id === tempId ? { ...x, status: "error" } : x)),
+        prev.map((x) => (x.id === jobId ? { ...x, status: "error" } : x)),
       );
+
+      throw new Error(msg);
+    }
+  }
+
+  async function onShield() {
+    if (isProcessing) return;
+
+    const pending = queue.filter((x) => x.status === "queued");
+    if (pending.length === 0) return;
+
+    setIsProcessing(true);
+    setUiError(null);
+
+    const errors: string[] = [];
+
+    try {
+      for (const job of pending) {
+        try {
+          await processJob(job.id);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          errors.push(`${job.filename}: ${msg}`);
+        }
+      }
+
+      if (errors.length > 0) {
+        setUiError(`Alguns itens falharam:\n- ${errors.join("\n- ")}`);
+      }
+    } finally {
       setIsProcessing(false);
       setEngine("standby");
     }
   }
 
-  function onPickFile(file: File) {
-    setSelectedFile(file);
-  }
-
-  function onShield() {
-    if (!selectedFile) return;
-    addJob(selectedFile.name, selectedFile);
-  }
+  const canShield = queue.some((x) => x.status === "queued");
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      <div className="mx-auto w-full max-w-[1280px] px-5 py-6">
+    <div className="min-h-screen bg-black text-white flex flex-col">
+      <div className="mx-auto w-full max-w-[1280px] px-5 py-6 flex-1">
         <TopBar
           name={operatorName}
           avatarUrl={avatarUrl}
+          isAdmin={isAdmin}
           onOpenProfile={() => setProfileOpen(true)}
         />
 
@@ -196,6 +415,17 @@ export function DashboardShell() {
           />
         ) : null}
 
+        {uiError ? (
+          <Card className="mt-6 rounded-2xl border-red-500/20 bg-red-500/10 p-4">
+            <div className="text-[11px] tracking-[0.18em] text-red-200">
+              ERRO
+            </div>
+            <div className="mt-2 whitespace-pre-line text-[12px] leading-relaxed text-white/80">
+              {uiError}
+            </div>
+          </Card>
+        ) : null}
+
         <div className="mt-10 grid gap-6 lg:grid-cols-[1fr_360px]">
           <div className="space-y-6">
             <SectionTitle
@@ -207,7 +437,7 @@ export function DashboardShell() {
             <WaveCard active={engine === "active"} />
 
             <LabelWithIndex index="01" title="UPLOAD DE ORIGEM" />
-            <UploadCard onPick={onPickFile} disabled={isProcessing} />
+            <UploadCard onPick={onPickFiles} disabled={isProcessing} />
 
             <LabelWithIndex index="02" title="FILA DE PROCESSAMENTO" />
             <QueueCard items={queue} />
@@ -241,9 +471,14 @@ export function DashboardShell() {
                 </div>
 
                 <Button
-                  className="h-11 w-full rounded-xl bg-yellow-500 text-black hover:bg-yellow-400 disabled:opacity-50 cursor-pointer"
-                  disabled={isProcessing || !selectedFile}
-                  onClick={onShield}
+                  className={cn(
+                    "h-11 w-full rounded-xl font-bold tracking-[0.25em] transition-all duration-300 cursor-pointer",
+                    canShield && !isProcessing
+                      ? "bg-yellow-500 text-black hover:bg-yellow-400"
+                      : "bg-white/5 text-white/20 border border-white/10 cursor-not-allowed",
+                  )}
+                  disabled={!canShield || isProcessing}
+                  onClick={() => onShield().catch(() => {})}
                   type="button"
                 >
                   {isProcessing ? (
@@ -256,15 +491,11 @@ export function DashboardShell() {
                   )}
                 </Button>
 
-                {!selectedFile ? (
-                  <div className="text-[10px] tracking-[0.25em] text-white/25">
-                    SELECIONE UMA MÍDIA PARA HABILITAR
-                  </div>
-                ) : (
-                  <div className="text-[10px] tracking-[0.25em] text-white/35">
-                    SELECIONADO: {selectedFile.name}
-                  </div>
-                )}
+                <div className="text-[10px] tracking-[0.25em] text-white/35">
+                  {canShield
+                    ? `${queue.filter((x) => x.status === "queued").length} ITEM(NS) NA FILA`
+                    : "SELECIONE MÍDIAS PARA ENTRAR NA FILA"}
+                </div>
               </div>
             </Card>
 
@@ -288,12 +519,12 @@ export function DashboardShell() {
               </div>
 
               <div className="mt-4">
-                {filtered.length === 0 ? (
+                {filteredHistory.length === 0 ? (
                   <EmptyHistory />
                 ) : (
                   <div className="space-y-2">
-                    {filtered.map((x) => (
-                      <HistoryRow key={x.id} item={x} />
+                    {filteredHistory.map((x) => (
+                      <HistoryRow key={`${x.id}-${x.createdAt}`} item={x} />
                     ))}
                   </div>
                 )}
@@ -318,21 +549,28 @@ export function DashboardShell() {
             </Card>
           </aside>
         </div>
+      </div>
 
-        <div className="mt-14 pb-10 text-center text-[10px] tracking-[0.35em] text-white/25">
+      <footer className="w-full border-t border-white/10 bg-black/50 backdrop-blur-sm">
+        <div className="mx-auto w-full max-w-[1280px] px-5 py-6 text-center text-[10px] tracking-[0.35em] text-white/25">
           © 2026 MG GROUP
         </div>
-      </div>
+      </footer>
     </div>
   );
 }
 
+/* ======================= UI COMPONENTS ======================= */
+
 function TopBar(props: {
   name: string;
   avatarUrl: string | null;
+  isAdmin: boolean;
   onOpenProfile: () => void;
 }) {
   const fallback = initialsFromName(props.name);
+  const router = useRouter();
+  const [loggingOut, setLoggingOut] = useState(false);
 
   return (
     <div className="flex items-center justify-between border-b border-white/10 pb-4">
@@ -354,6 +592,18 @@ function TopBar(props: {
           </span>
         </div>
 
+        {props.isAdmin && (
+          <Link
+            href="/admin"
+            className="flex items-center gap-2 rounded-full border border-purple-500/20 bg-purple-500/10 px-3 py-2 hover:bg-purple-500/20 transition cursor-pointer"
+          >
+            <Settings className="h-3 w-3 text-purple-400" />
+            <span className="text-[10px] tracking-[0.25em] text-purple-300">
+              ADMIN
+            </span>
+          </Link>
+        )}
+
         <button
           type="button"
           onClick={props.onOpenProfile}
@@ -372,6 +622,30 @@ function TopBar(props: {
               {fallback}
             </AvatarFallback>
           </Avatar>
+        </button>
+
+        <button
+          type="button"
+          disabled={loggingOut}
+          onClick={async () => {
+            setLoggingOut(true);
+            try {
+              await signOut();
+              router.push("/auth");
+            } catch (e) {
+              console.error(e);
+            } finally {
+              setLoggingOut(false);
+            }
+          }}
+          className="p-2 rounded-full border border-red-500/20 bg-red-500/10 hover:bg-red-500/20 text-red-400 transition cursor-pointer disabled:opacity-50"
+          title="Sair"
+        >
+          {loggingOut ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <LogOut className="h-4 w-4" />
+          )}
         </button>
       </div>
     </div>
@@ -416,56 +690,56 @@ function SectionTitle(props: {
   );
 }
 
+/** ===== Wave neon ===== */
+
 function WaveCard(props: { active: boolean }) {
   return (
     <Card className="relative overflow-hidden rounded-2xl border-white/10 bg-white/[0.03]">
-      <div className="h-[140px] w-full">
-        <div className="absolute inset-0 opacity-[0.08]" style={gridBg} />
-        <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/70 to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/70 to-transparent" />
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute -inset-24 opacity-40" style={neonRadial} />
+        <div className="absolute inset-0 opacity-[0.10]" style={gridBg} />
+        <div className="absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-black/80 to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/80 to-transparent" />
+        <div
+          className={cn(
+            "absolute inset-0 ring-1 ring-inset rounded-2xl",
+            props.active ? "ring-yellow-500/25" : "ring-white/10",
+          )}
+        />
+        <div
+          className={cn(
+            "absolute inset-0 rounded-2xl",
+            props.active ? "opacity-100" : "opacity-50",
+          )}
+          style={animatedBorder}
+        />
+      </div>
 
-        <div className="relative h-full w-full">
-          <div className="absolute left-5 top-4 text-[10px] tracking-[0.35em] text-white/35">
-            SIGNAL VISUALIZER
-          </div>
+      <div className="relative h-[150px] w-full">
+        <div className="absolute left-5 top-4 text-[10px] tracking-[0.35em] text-white/35">
+          SIGNAL VISUALIZER
+        </div>
 
-          <div className="absolute inset-0 grid place-items-center">
-            <WaveBars active={props.active} />
-          </div>
+        <div className="absolute inset-0 grid place-items-center">
+          <WaveBars active={props.active} />
         </div>
       </div>
-    </Card>
-  );
-}
-
-function WaveBars(props: { active: boolean }) {
-  const bars = Array.from({ length: 54 });
-
-  return (
-    <div className="flex h-14 items-end gap-[3px]">
-      {bars.map((_, i) => {
-        const h = props.active ? 10 + ((i * 13) % 42) : 6;
-        return (
-          <div
-            key={i}
-            className={cn(
-              "w-[3px] rounded-sm",
-              props.active ? "bg-yellow-400/90" : "bg-white/10",
-            )}
-            style={{
-              height: `${h}px`,
-              opacity: props.active ? 1 : 0.6,
-              transition: "height 240ms ease",
-              animation: props.active
-                ? "pulseWave 1.2s ease-in-out infinite"
-                : undefined,
-              animationDelay: props.active ? `${(i % 10) * 0.06}s` : undefined,
-            }}
-          />
-        );
-      })}
 
       <style jsx global>{`
+        @keyframes neonBorder {
+          0% {
+            transform: translateX(-30%);
+            opacity: 0.45;
+          }
+          50% {
+            transform: translateX(30%);
+            opacity: 0.9;
+          }
+          100% {
+            transform: translateX(-30%);
+            opacity: 0.45;
+          }
+        }
         @keyframes pulseWave {
           0% {
             transform: translateY(0);
@@ -481,6 +755,52 @@ function WaveBars(props: { active: boolean }) {
           }
         }
       `}</style>
+    </Card>
+  );
+}
+
+function WaveBars(props: { active: boolean }) {
+  const bars = Array.from({ length: 54 });
+
+  return (
+    <div className="relative">
+      <div
+        className={cn(
+          "absolute inset-0 blur-2xl opacity-0 transition-opacity duration-300",
+          props.active && "opacity-70",
+        )}
+        style={neonGlowLayer}
+      />
+
+      <div className="relative flex h-14 items-end gap-[3px]">
+        {bars.map((_, i) => {
+          const h = props.active ? 10 + ((i * 13) % 42) : 6;
+
+          return (
+            <div
+              key={i}
+              className={cn(
+                "w-[3px] rounded-sm transition-all",
+                props.active ? "bg-yellow-400/90" : "bg-white/10",
+              )}
+              style={{
+                height: `${h}px`,
+                opacity: props.active ? 1 : 0.6,
+                transition: "height 240ms ease",
+                filter: props.active
+                  ? "drop-shadow(0 0 10px rgba(250,204,21,0.35)) drop-shadow(0 0 20px rgba(250,204,21,0.20))"
+                  : undefined,
+                animation: props.active
+                  ? "pulseWave 1.2s ease-in-out infinite"
+                  : undefined,
+                animationDelay: props.active
+                  ? `${(i % 10) * 0.06}s`
+                  : undefined,
+              }}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -499,14 +819,10 @@ function LabelWithIndex(props: { index: string; title: string }) {
 }
 
 function UploadCard(props: {
-  onPick: (file: File) => void;
+  onPick: (files: FileList | File[]) => void;
   disabled?: boolean;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleButtonClick = () => {
-    fileInputRef.current?.click();
-  };
 
   return (
     <Card className="rounded-2xl border-white/10 bg-white/[0.03] p-5">
@@ -518,7 +834,6 @@ function UploadCard(props: {
         <div className="mt-4 text-[11px] tracking-[0.22em] text-white/75">
           SELECIONAR MÍDIA
         </div>
-
         <div className="mt-2 text-[10px] tracking-[0.20em] text-white/35">
           MP3, WAV, MP4, MOV (MAX 100MB)
         </div>
@@ -528,11 +843,12 @@ function UploadCard(props: {
             type="file"
             ref={fileInputRef}
             className="hidden"
+            multiple
             disabled={props.disabled}
             onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (!f) return;
-              props.onPick(f);
+              const fs = e.target.files;
+              if (!fs || fs.length === 0) return;
+              props.onPick(fs);
               e.target.value = "";
             }}
             accept=".mp3,.wav,.mp4,.mov"
@@ -544,10 +860,10 @@ function UploadCard(props: {
             )}
             type="button"
             variant="secondary"
-            onClick={handleButtonClick}
+            onClick={() => fileInputRef.current?.click()}
             disabled={props.disabled}
           >
-            Selecionar arquivo
+            Selecionar arquivo(s)
           </Button>
         </div>
       </div>
@@ -565,7 +881,11 @@ function QueueCard(props: { items: SessionItem[] }) {
   }
 
   const current =
-    props.items.find((x) => x.status === "processing") ?? props.items[0];
+    props.items.find((x) => x.status === "processing") ??
+    props.items.find((x) => x.status === "queued") ??
+    props.items[0];
+
+  const queuedCount = props.items.filter((x) => x.status === "queued").length;
 
   return (
     <Card className="rounded-2xl border-yellow-500/20 bg-yellow-500/5 p-5">
@@ -575,7 +895,11 @@ function QueueCard(props: { items: SessionItem[] }) {
             {current.filename.toUpperCase()}
           </div>
           <div className="mt-1 text-[10px] tracking-[0.22em] text-white/45">
-            {current.status === "processing" ? "SHIELDING..." : "READY"}
+            {current.status === "processing"
+              ? "SHIELDING..."
+              : queuedCount > 0
+                ? `QUEUED (${queuedCount})`
+                : "QUEUE"}
           </div>
         </div>
 
@@ -592,11 +916,51 @@ function QueueCard(props: { items: SessionItem[] }) {
       <div className="mt-4 h-2 overflow-hidden rounded-full bg-black/40">
         <div
           className={cn(
-            "h-full bg-yellow-400/90",
+            "h-full bg-yellow-400/90 transition-all",
             current.status === "processing" ? "w-[55%]" : "w-full",
           )}
         />
       </div>
+
+      {props.items.length > 1 ? (
+        <div className="mt-4 space-y-2">
+          {props.items.slice(0, 4).map((x) => (
+            <div
+              key={x.id}
+              className="flex items-center justify-between rounded-xl border border-white/10 bg-black/30 px-3 py-2"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-[10px] tracking-[0.18em] text-white/70">
+                  {x.filename.toUpperCase()}
+                </div>
+                <div className="mt-1 text-[9px] tracking-[0.20em] text-white/35">
+                  {x.status.toUpperCase()}
+                </div>
+              </div>
+              <div
+                className={cn(
+                  "rounded-full px-2 py-[3px] text-[9px] tracking-[0.22em] border",
+                  x.status === "queued" &&
+                    "border-white/10 text-white/45 bg-white/5",
+                  x.status === "processing" &&
+                    "border-yellow-500/25 text-yellow-300 bg-yellow-500/10",
+                  x.status === "error" &&
+                    "border-red-500/25 text-red-300 bg-red-500/10",
+                  x.status === "done" &&
+                    "border-emerald-500/25 text-emerald-300 bg-emerald-500/10",
+                )}
+              >
+                {x.status.toUpperCase()}
+              </div>
+            </div>
+          ))}
+          {props.items.length > 4 ? (
+            <div className="text-[9px] tracking-[0.22em] text-white/30">
+              +{props.items.length - 4} item(ns)
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </Card>
   );
 }
@@ -668,11 +1032,19 @@ function EmptyHistory() {
 }
 
 function HistoryRow(props: { item: SessionItem }) {
-  const st = props.item.status;
+  const [downloading, setDownloading] = useState(false);
 
-  const handleDownload = () => {
-    if (st === "done") {
-      window.open(`/api/cache/${props.item.id}/download`, "_blank");
+  const handleDownload = async () => {
+    const url =
+      props.item.downloadUrl || `/api/cache/${props.item.id}/download`;
+
+    try {
+      setDownloading(true);
+      await downloadDirect(url, props.item.filename);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -689,36 +1061,30 @@ function HistoryRow(props: { item: SessionItem }) {
         </div>
 
         <div className="flex items-center gap-2">
-          <div
-            className={cn(
-              "shrink-0 rounded-full px-2 py-[3px] text-[9px] tracking-[0.22em]",
-              st === "processing" &&
-                "bg-yellow-500/10 text-yellow-300 border border-yellow-500/20",
-              st === "done" &&
-                "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20",
-              st === "error" &&
-                "bg-red-500/10 text-red-300 border border-red-500/20",
-              st === "idle" &&
-                "bg-white/5 text-white/45 border border-white/10",
-            )}
-          >
-            {st.toUpperCase()}
+          <div className="shrink-0 rounded-full px-2 py-[3px] text-[9px] tracking-[0.22em] bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+            DONE
           </div>
 
-          {st === "done" && (
-            <button
-              onClick={handleDownload}
-              className="shrink-0 rounded-lg border border-yellow-500/25 bg-yellow-500/10 px-2 py-1 text-[9px] tracking-[0.22em] text-yellow-300 hover:bg-yellow-500/20 transition cursor-pointer"
-              type="button"
-            >
-              DOWNLOAD
-            </button>
-          )}
+          <button
+            onClick={() => handleDownload().catch(() => {})}
+            disabled={downloading}
+            className={cn(
+              "shrink-0 rounded-lg border px-2 py-1 text-[9px] tracking-[0.22em] transition cursor-pointer",
+              downloading
+                ? "border-white/10 bg-white/5 text-white/25 cursor-not-allowed"
+                : "border-yellow-500/25 bg-yellow-500/10 text-yellow-300 hover:bg-yellow-500/20",
+            )}
+            type="button"
+          >
+            {downloading ? "BAIXANDO..." : "DOWNLOAD"}
+          </button>
         </div>
       </div>
     </div>
   );
 }
+
+/* ====== ProfileDialog ====== */
 
 function ProfileDialog(props: {
   open: boolean;
@@ -746,6 +1112,12 @@ function ProfileDialog(props: {
     setSaving(true);
     const supabase = supabaseBrowser();
 
+    const { data: sess } = await supabase.auth.getSession();
+    if (!sess.session) {
+      setSaving(false);
+      return;
+    }
+
     const { data: userData } = await supabase.auth.getUser();
     const user = userData.user;
 
@@ -758,20 +1130,29 @@ function ProfileDialog(props: {
 
     if (avatarFile) {
       try {
-        const path = `${user.id}/avatar-${Date.now()}`;
+        const key = `${user.id}/${safeName(avatarFile.name)}-${avatarFile.size}-${avatarFile.lastModified}`;
         const up = await supabase.storage
           .from("avatars")
-          .upload(path, avatarFile, {
+          .upload(key, avatarFile, {
             upsert: true,
-            contentType: avatarFile.type,
+            contentType: avatarFile.type || "application/octet-stream",
           });
 
-        if (!up.error) {
-          const pub = supabase.storage.from("avatars").getPublicUrl(path);
-          nextAvatarUrl = pub.data.publicUrl ?? nextAvatarUrl;
+        if (up.error) {
+          if (isStorageBucketNotFound(up.error)) {
+            throw new Error(
+              "Bucket 'avatars' não existe no Supabase Storage. Crie o bucket com esse nome (avatars) no painel do Supabase.",
+            );
+          }
+          throw up.error;
         }
-      } catch {
-        nextAvatarUrl = nextAvatarUrl ?? null;
+
+        const pub = supabase.storage.from("avatars").getPublicUrl(key);
+        nextAvatarUrl = pub.data.publicUrl ?? nextAvatarUrl;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setSaving(false);
+        throw new Error(msg);
       }
     }
 
@@ -854,7 +1235,7 @@ function ProfileDialog(props: {
           <Button
             className="h-12 w-full rounded-xl bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer"
             disabled={saving || fullName.trim().length < 2}
-            onClick={onSave}
+            onClick={() => onSave().catch(() => {})}
             type="button"
           >
             {saving ? "SALVANDO..." : "ATUALIZAR CREDENCIAIS"}
@@ -865,8 +1246,27 @@ function ProfileDialog(props: {
   );
 }
 
+/* ======================= STYLES ======================= */
+
 const gridBg = {
   backgroundImage:
     "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.16) 1px, transparent 0)",
   backgroundSize: "18px 18px",
+};
+
+const neonRadial = {
+  background:
+    "radial-gradient(800px circle at 50% 40%, rgba(250,204,21,0.18), rgba(0,0,0,0) 55%)",
+};
+
+const neonGlowLayer = {
+  background:
+    "radial-gradient(220px circle at 50% 60%, rgba(250,204,21,0.35), rgba(0,0,0,0) 65%)",
+};
+
+const animatedBorder: React.CSSProperties = {
+  background:
+    "linear-gradient(90deg, rgba(250,204,21,0) 0%, rgba(250,204,21,0.22) 45%, rgba(250,204,21,0) 100%)",
+  filter: "blur(10px)",
+  animation: "neonBorder 2.6s ease-in-out infinite",
 };

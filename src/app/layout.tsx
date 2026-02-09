@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { Toaster } from "@/components/ui/sonner";
 
 const space = Space_Grotesk({
   subsets: ["latin"],
@@ -23,12 +24,26 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${space.variable} ${mono.variable}`}>{children}</body>
+      <body className={`${space.variable} ${mono.variable}`}>
+        {children}
+        <Toaster
+          theme="dark"
+          position="bottom-right"
+          richColors={false}
+          toastOptions={{
+            classNames: {
+              toast: "ab-toast",
+              title: "ab-toast-title",
+              description: "ab-toast-desc",
+              actionButton: "ab-toast-action",
+              cancelButton: "ab-toast-cancel",
+            },
+          }}
+        />
+      </body>
     </html>
   );
 }

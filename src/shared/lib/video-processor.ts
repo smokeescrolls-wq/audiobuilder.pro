@@ -104,12 +104,12 @@ export async function processVideoWithShielding(
 async function moveFile(src: string, dest: string) {
   try {
     await fs.rename(src, dest);
-} catch {
-  await fs.copyFile(src, dest);
-  await fs.unlink(src).catch(() => {});
+  } catch {
+    await fs.copyFile(src, dest);
+    await fs.unlink(src).catch(() => {});
+  }
 }
 
-}
 
 /**
  * Process a video/audio file from disk without buffering the entire input in memory.
@@ -231,7 +231,7 @@ function applyAudioShielding(
       const totalFactor = invertFactor + keepFactor;
       
       // Inverter fase do canal direito
-      filters.push(`[R]aeval=val(0)*${totalFactor}:c=mono[R_inv]`);
+      filters.push(`[R]aeval='val(0)*${totalFactor}':c=mono[R_inv]`);
       
       // Recombine channels - join left and inverted/delayed right
       filters.push("[L][R_inv]join=inputs=2:channel_layout=stereo[stereo]");
@@ -241,7 +241,7 @@ function applyAudioShielding(
         // Generate subtle high-frequency noise
         // Usar sine waves em frequências altas mas com amplitude muito baixa
         filters.push(
-          `aevalsrc=${noiseLevel}*(sin(2*PI*16000*t)+0.7*sin(2*PI*17500*t)+0.5*sin(2*PI*19000*t)):s=44100:c=stereo:d=99999[noise]`
+          `aevalsrc='${noiseLevel}*(sin(2*PI*16000*t)+0.7*sin(2*PI*17500*t)+0.5*sin(2*PI*19000*t))':s=44100:c=stereo:d=99999[noise]`
         );
         // Mix: áudio original com peso 1, ruído com peso muito baixo
         filters.push("[stereo][noise]amix=inputs=2:duration=first:weights=1 0.05[out]");
@@ -251,7 +251,7 @@ function applyAudioShielding(
     } else if (noiseLevel > 0) {
       // Only noise, no phase inversion
       filters.push(
-        `aevalsrc=${noiseLevel}*(sin(2*PI*16000*t)+0.7*sin(2*PI*17500*t)):s=44100:c=stereo:d=99999[noise]`
+        `aevalsrc='${noiseLevel}*(sin(2*PI*16000*t)+0.7*sin(2*PI*17500*t))':s=44100:c=stereo:d=99999[noise]`
       );
       filters.push("[0:a][noise]amix=inputs=2:duration=first:weights=1 0.05[out]");
     } else {
@@ -269,15 +269,11 @@ function applyAudioShielding(
       .output(outputPath)
       .on("end", () => resolve())
       .on("error", (err) => {
-        console.error("[VideoProcessor] Complex filter failed:", err.message);
-        console.log("[VideoProcessor] Tentando método alternativo (stereotools)...");
+        console.error("Complex filter failed, trying alternative method:", err.message);
         // Fallback to stereotools filter
         applyShieldingWithStereotools(inputPath, outputPath, options)
           .then(resolve)
-          .catch((fallbackErr) => {
-            console.error("[VideoProcessor] Método alternativo também falhou:", fallbackErr.message);
-            reject(new Error(`Falha no processamento de áudio: ${err.message}. Fallback: ${fallbackErr.message}`));
-          });
+          .catch(reject);
       })
       .run();
   });
