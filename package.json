@@ -2,6 +2,10 @@
   "name": "mg-app",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "lint": "eslint .",
     "lint:next": "next lint",
@@ -18,6 +22,14 @@
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
       "pnpm lint:staged"
+    ]
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/engines",
+      "esbuild",
+      "ffmpeg-static",
+      "prisma"
     ]
   },
   "dependencies": {
